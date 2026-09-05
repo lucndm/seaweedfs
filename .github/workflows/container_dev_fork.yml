@@ -107,15 +107,14 @@ jobs:
 
       - name: Place Rust binaries in Docker context
         run: |
-          mkdir -p docker/weed-volume-prebuilt
-          mkdir -p docker/weed-worker-prebuilt
+          mkdir -p prebuilt
           if [ -f "./rust-bins/weed-volume-normal-amd64" ]; then
-            cp ./rust-bins/weed-volume-normal-amd64 docker/weed-volume-prebuilt/weed-volume-amd64
+            cp ./rust-bins/weed-volume-normal-amd64 prebuilt/weed-volume-amd64
           fi
           if [ -f "./rust-bins/weed-worker-amd64" ]; then
-            cp ./rust-bins/weed-worker-amd64 docker/weed-worker-prebuilt/weed-worker-amd64
+            cp ./rust-bins/weed-worker-amd64 prebuilt/weed-worker-amd64
           fi
-          ls -la docker/weed-volume-prebuilt/ docker/weed-worker-prebuilt/
+          ls -la prebuilt/
 
       - name: Docker meta
         id: docker_meta
@@ -153,10 +152,12 @@ jobs:
       - name: Build and push
         uses: docker/build-push-action@v7
         with:
-          context: ./docker
+          context: .
           push: true
-          file: ./docker/Dockerfile.go_build
+          file: ./docker/Dockerfile.fork
           platforms: linux/amd64
+          build-args: |
+            COMMIT=${{ github.sha }}
           tags: ${{ steps.docker_meta.outputs.tags }}
           labels: ${{ steps.docker_meta.outputs.labels }}
           cache-from: type=gha,scope=fork-dev-amd64
