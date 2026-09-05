@@ -43,13 +43,13 @@ func eagerPreGrow(bytesBuffer *bytes.Buffer, contentLength, sizeLimit int64) {
 }
 
 type ParsedUpload struct {
-	FileName    string
-	Data        []byte
-	bytesBuffer *bytes.Buffer
-	MimeType    string
-	PairMap     map[string]string
-	IsGzipped   bool
-	// IsZstd           bool
+	FileName         string
+	Data             []byte
+	bytesBuffer      *bytes.Buffer
+	MimeType         string
+	PairMap          map[string]string
+	IsGzipped        bool
+	IsZstd           bool
 	OriginalDataSize int
 	ModifiedTime     uint64
 	Ttl              *TTL
@@ -82,7 +82,7 @@ func ParseUpload(r *http.Request, sizeLimit int64, bytesBuffer *bytes.Buffer) (p
 	pu.OriginalDataSize = len(pu.Data)
 	pu.UncompressedData = pu.Data
 	// println("received data", len(pu.Data), "isGzipped", pu.IsGzipped, "mime", pu.MimeType, "name", pu.FileName)
-	if pu.IsGzipped {
+	if pu.IsGzipped || pu.IsZstd {
 		// MD5 check needs the uncompressed bytes; otherwise just count
 		// the gunzip stream — see #6541.
 		needMD5 := r.Header.Get("Content-MD5") != "" || pu.ContentMd5 != ""
@@ -91,8 +91,14 @@ func ParseUpload(r *http.Request, sizeLimit int64, bytesBuffer *bytes.Buffer) (p
 				pu.OriginalDataSize = len(unzipped)
 				pu.UncompressedData = unzipped
 			}
-		} else if n, err := util.GunzipStream(io.Discard, bytes.NewReader(pu.Data)); err == nil {
-			pu.OriginalDataSize = int(n)
+		} else if pu.IsGzipped {
+			if n, err := util.GunzipStream(io.Discard, bytes.NewReader(pu.Data)); err == nil {
+				pu.OriginalDataSize = int(n)
+			}
+		} else if pu.IsZstd {
+			if n, err := util.UnzstdStream(io.Discard, bytes.NewReader(pu.Data)); err == nil {
+				pu.OriginalDataSize = int(n)
+			}
 		}
 	} else if r.URL.Query().Get("type") != "replicate" {
 		// replica writes must keep the source needle's compression state, not re-derive it
@@ -217,7 +223,7 @@ func parseUpload(r *http.Request, sizeLimit int64, pu *ParsedUpload) (e error) {
 		}
 
 		pu.IsGzipped = part.Header.Get("Content-Encoding") == "gzip"
-		// pu.IsZstd = part.Header.Get("Content-Encoding") == "zstd"
+		pu.IsZstd = part.Header.Get("Content-Encoding") == "zstd"
 
 	} else {
 		disposition := r.Header.Get("Content-Disposition")
@@ -266,7 +272,7 @@ func parseUpload(r *http.Request, sizeLimit int64, pu *ParsedUpload) (e error) {
 		pu.Data = pu.bytesBuffer.Bytes()
 		pu.MimeType = contentType
 		pu.IsGzipped = r.Header.Get("Content-Encoding") == "gzip"
-		// pu.IsZstd = r.Header.Get("Content-Encoding") == "zstd"
+		pu.IsZstd = r.Header.Get("Content-Encoding") == "zstd"
 	}
 
 	pu.IsChunkedFile, _ = strconv.ParseBool(r.FormValue("cm"))

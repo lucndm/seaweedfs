@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"io"
 	"sync"
+
+	"github.com/klauspost/compress/zstd"
 )
 
 var (
@@ -19,6 +21,13 @@ var (
 		New: func() interface{} {
 			w, _ := gzip.NewWriterLevel(nil, gzip.BestSpeed)
 			return w
+		},
+	}
+
+	zstdReaderPool = sync.Pool{
+		New: func() interface{} {
+			d, _ := zstd.NewReader(nil)
+			return d
 		},
 	}
 )
@@ -50,4 +59,19 @@ func GunzipStream(w io.Writer, r io.Reader) (int64, error) {
 		gzipReaderPool.Put(gr)
 	}()
 	return io.Copy(w, gr)
+}
+
+func UnzstdStream(w io.Writer, r io.Reader) (int64, error) {
+	zr, ok := zstdReaderPool.Get().(*zstd.Decoder)
+	if !ok {
+		return 0, fmt.Errorf("zstd: new reader error")
+	}
+	if err := zr.Reset(r); err != nil {
+		return 0, err
+	}
+	defer func() {
+		zr.Reset(nil)
+		zstdReaderPool.Put(zr)
+	}()
+	return io.Copy(w, zr)
 }
