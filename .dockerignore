@@ -1,0 +1,12 @@
+# Keep the build context small for docker/Dockerfile.fork (root context)
+.git
+.github
+.serena
+test
+k8s
+seaweed-volume/target
+seaweed-worker/target
+docker/weed
+*.md
+!go.mod
+!go.sum
