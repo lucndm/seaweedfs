@@ -83,7 +83,7 @@ func CreateNeedleFromRequest(r *http.Request, fixJpgOrientation bool, sizeLimit 
 			n.SetHasPairs()
 		}
 	}
-	if pu.IsGzipped {
+	if pu.IsGzipped || pu.IsZstd {
 		// println(r.URL.Path, "is set to compressed", pu.FileName, pu.IsGzipped, "dataSize", pu.OriginalDataSize)
 		n.SetIsCompressed()
 	}

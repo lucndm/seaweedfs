@@ -6,7 +6,8 @@ import (
 	"strings"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
-	// "github.com/klauspost/compress/zstd"
+
+	"github.com/klauspost/compress/zstd"
 )
 
 var (
@@ -60,11 +61,9 @@ func DecompressData(input []byte) ([]byte, error) {
 	if IsGzippedContent(input) {
 		return ungzipData(input)
 	}
-	/*
-		if IsZstdContent(input) {
-			return unzstdData(input)
-		}
-	*/
+	if IsZstdContent(input) {
+		return unzstdData(input)
+	}
 	return input, UnsupportedCompression
 }
 
@@ -75,17 +74,16 @@ func IsGzippedContent(data []byte) bool {
 	return data[0] == 31 && data[1] == 139
 }
 
-/*
 var zstdEncoder, _ = zstd.NewWriter(nil)
 
 func ZstdData(input []byte) ([]byte, error) {
 	return zstdEncoder.EncodeAll(input, nil), nil
 }
 
-var decoder, _ = zstd.NewReader(nil)
+var zstdDecoder, _ = zstd.NewReader(nil)
 
 func unzstdData(input []byte) ([]byte, error) {
-	return decoder.DecodeAll(input, nil)
+	return zstdDecoder.DecodeAll(input, nil)
 }
 
 func IsZstdContent(data []byte) bool {
@@ -94,7 +92,6 @@ func IsZstdContent(data []byte) bool {
 	}
 	return data[3] == 0xFD && data[2] == 0x2F && data[1] == 0xB5 && data[0] == 0x28
 }
-*/
 
 /*
 * Default not to compressed since compression can be done on client side.
