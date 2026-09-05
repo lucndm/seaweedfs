@@ -1,0 +1,64 @@
+# Fork-specific image: builds from the LOCAL source tree (what CI checks out)
+# instead of cloning upstream, so custom patches are always included.
+# Requires rust binaries placed at ./prebuilt/ by the workflow (amd64).
+
+FROM --platform=$BUILDPLATFORM golang:1.26-alpine AS builder
+RUN apk add git g++ fuse
+ARG TAGS
+ARG TARGETOS TARGETARCH
+ARG COMMIT=unknown
+WORKDIR /src
+COPY go.mod go.sum ./
+COPY weed/ ./weed/
+# weed/telemetry imports the top-level telemetry/proto package
+COPY telemetry/ ./telemetry/
+RUN cd weed \
+  && export LDFLAGS="-X github.com/seaweedfs/seaweedfs/weed/util/version.COMMIT=${COMMIT}" \
+  && CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go build -tags "$TAGS" -ldflags "-extldflags -static ${LDFLAGS}" -o /go/bin/weed .
+
+FROM alpine AS final
+LABEL author="lucndm"
+LABEL org.opencontainers.image.description="SeaweedFS fork (lucndm) with custom patches"
+COPY --from=builder /go/bin/weed /usr/bin/
+# Rust components built natively by the CI job
+COPY prebuilt/weed-volume-amd64 /usr/bin/weed-volume
+COPY prebuilt/weed-worker-amd64 /usr/bin/weed-worker
+RUN mkdir -p /etc/seaweedfs
+COPY docker/filer.toml /etc/seaweedfs/filer.toml
+COPY docker/entrypoint.sh /entrypoint.sh
+
+RUN apk upgrade --no-cache && \
+    apk add --no-cache fuse curl su-exec libgcc libcrypto3 libssl3 && \
+    addgroup -g 1000 seaweed && \
+    adduser -D -u 1000 -G seaweed seaweed && \
+    chmod +x /entrypoint.sh && \
+    mkdir -p /data/filerldb2 && \
+    chown -R seaweed:seaweed /data /etc/seaweedfs
+
+# volume server grpc port
+EXPOSE 18080
+# volume server http port
+EXPOSE 8080
+# filer server grpc port
+EXPOSE 18888
+# filer server http port
+EXPOSE 8888
+# master server shared grpc port
+EXPOSE 19333
+# master server shared http port
+EXPOSE 9333
+# s3 server http port
+EXPOSE 8333
+# webdav server http port
+EXPOSE 7333
+# admin server http port
+EXPOSE 23646
+# metrics http port
+EXPOSE 9327
+
+VOLUME /data
+WORKDIR /data
+
+ENTRYPOINT ["/entrypoint.sh"]
+# Default to a complete single-process cluster (master+volume+filer+S3+admin)
+CMD ["mini", "-dir=/data"]
