@@ -190,7 +190,7 @@ func submitForClientHandler(w http.ResponseWriter, r *http.Request, masterFn ope
 		UploadUrl:         url,
 		Filename:          pu.FileName,
 		Cipher:            false,
-		IsInputCompressed: pu.IsGzipped,
+		IsInputCompressed: pu.IsGzipped || pu.IsZstd,
 		MimeType:          pu.MimeType,
 		PairMap:           pu.PairMap,
 		Jwt:               assignResult.Auth,
