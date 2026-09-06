@@ -1,6 +1,7 @@
 package weed_server
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -216,7 +217,15 @@ func (fs *FilerServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request) 
 		return err
 	})
 
-	ProcessRangeRequest(r, w, totalSize, mimeType, func(offset int64, size int64) (filer.DoStreamContent, error) {
+	// fork: zstd stored-content negotiation — peek body head, then either
+	// pass frames through with Content-Encoding: zstd or decode for plain clients
+	zw := newZstdAwareWriter(w, r)
+	if zw.hasRange && zw.acceptsZstd {
+		// Ranged responses write the header before streaming, so decide via a
+		// tiny head probe instead of the body peek.
+		zw.PreDecide(fs.probeStoredZstd(ctx, entry))
+	}
+	ProcessRangeRequest(r, zw, totalSize, mimeType, func(offset int64, size int64) (filer.DoStreamContent, error) {
 		if offset+size <= int64(len(entry.Content)) {
 			return func(writer io.Writer) error {
 				_, err := writer.Write(entry.Content[offset : offset+size])
@@ -299,6 +308,32 @@ func (fs *FilerServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request) 
 			return err
 		}, nil
 	})
+	zw.Finalize()
+}
+
+// probeStoredZstd reports whether the entry's stored bytes start with a zstd
+// frame magic. It fetches only the first few bytes. Remote-only entries with
+// no cached chunks and probe failures report false, which keeps the legacy
+// raw-passthrough behavior.
+func (fs *FilerServer) probeStoredZstd(ctx context.Context, entry *filer.Entry) bool {
+	if len(entry.Content) > 0 {
+		return util.IsZstdContent(entry.Content)
+	}
+	chunks := entry.GetChunks()
+	if len(chunks) == 0 {
+		return false
+	}
+	streamFn, err := filer.PrepareStreamContentWithPrefetch(ctx, fs.filer.MasterClient, fs.maybeGetVolumeReadJwtAuthorizationToken, chunks, 0, zstdPeekLen, 0, 0)
+	if err != nil {
+		glog.V(1).InfofCtx(ctx, "filer zstd: head probe %s: %v", entry.FullPath, err)
+		return false
+	}
+	buf := bytes.NewBuffer(nil)
+	if err := streamFn(buf); err != nil {
+		glog.V(1).InfofCtx(ctx, "filer zstd: head probe read %s: %v", entry.FullPath, err)
+		return false
+	}
+	return util.IsZstdContent(buf.Bytes())
 }
 
 // streamFromRemoteOnly serves a byte range of an entry whose mount opted out of
