@@ -75,3 +75,30 @@ func UnzstdStream(w io.Writer, r io.Reader) (int64, error) {
 	}()
 	return io.Copy(w, zr)
 }
+
+// GetPooledZstdDecoder checks out a pooled zstd decoder wired to r. The
+// returned decoder streams decompressed bytes; release it with
+// PutPooledZstdDecoder. Used by chunk fetches that pass zstd through
+// Accept-Encoding negotiation and must decode the response body.
+func GetPooledZstdDecoder(r io.Reader) (*zstd.Decoder, error) {
+	zr, ok := zstdReaderPool.Get().(*zstd.Decoder)
+	if !ok {
+		var err error
+		zr, err = zstd.NewReader(nil)
+		if err != nil {
+			return nil, err
+		}
+	}
+	if err := zr.Reset(r); err != nil {
+		zstdReaderPool.Put(zr)
+		return nil, err
+	}
+	return zr, nil
+}
+
+// PutPooledZstdDecoder returns a decoder to the pool. Safe to call at any
+// point of the stream; Reset(nil) drops whatever decode state is left.
+func PutPooledZstdDecoder(zr *zstd.Decoder) {
+	zr.Reset(nil)
+	zstdReaderPool.Put(zr)
+}
