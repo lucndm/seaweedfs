@@ -113,12 +113,12 @@ func ParseUpload(r *http.Request, sizeLimit int64, bytesBuffer *bytes.Buffer) (p
 		}
 		if shouldBeCompressed, iAmSure := util.IsCompressableFileType(ext, mimeType); shouldBeCompressed && iAmSure {
 			// println("ext", ext, "iAmSure", iAmSure, "shouldBeCompressed", shouldBeCompressed, "mimeType", pu.MimeType)
-			if compressedData, err := util.GzipData(pu.Data); err == nil {
+			if compressedData, err := util.ZstdData(pu.Data); err == nil {
 				if len(compressedData)*10 < len(pu.Data)*9 {
 					pu.Data = compressedData
-					pu.IsGzipped = true
+					pu.IsZstd = true
 				}
-				// println("gzipped data size", len(compressedData))
+				// println("zstd data size", len(compressedData))
 			}
 		}
 	}
