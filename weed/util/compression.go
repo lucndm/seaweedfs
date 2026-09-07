@@ -93,6 +93,20 @@ func IsZstdContent(data []byte) bool {
 	return data[3] == 0xFD && data[2] == 0x2F && data[1] == 0xB5 && data[0] == 0x28
 }
 
+// ContentEncodingOf reports the Content-Encoding value ("gzip" or "zstd")
+// for data whose compression algorithm is not tracked upstream, by sniffing
+// the magic bytes. Returns "" when the data is not compressed with either
+// algorithm.
+func ContentEncodingOf(data []byte) string {
+	if IsGzippedContent(data) {
+		return "gzip"
+	}
+	if IsZstdContent(data) {
+		return "zstd"
+	}
+	return ""
+}
+
 /*
 * Default not to compressed since compression can be done on client side.
  */func IsCompressableFileType(ext, mtype string) (shouldBeCompressed, iAmSure bool) {
