@@ -391,7 +391,12 @@ func ReadUrlAsStream(ctx context.Context, fileUrl, jwt string, cipherKey []byte,
 	maybeAddAuth(req, jwt)
 
 	if isFullChunk {
-		req.Header.Add("Accept-Encoding", "gzip")
+		// Advertise zstd alongside gzip: since uploads default to zstd
+		// compression, this lets the volume server pass zstd needles through
+		// compressed instead of decompressing them on every fetch. The zstd
+		// case below decodes the body before the callback sees it, so callers
+		// always receive clear data either way.
+		req.Header.Add("Accept-Encoding", "gzip, zstd")
 	} else {
 		req.Header.Add("Range", fmt.Sprintf("bytes=%d-%d", offset, offset+int64(size)-1))
 	}
@@ -417,15 +422,23 @@ func ReadUrlAsStream(ctx context.Context, fileUrl, jwt string, cipherKey []byte,
 		return retryable, fmt.Errorf("%s: %s", fileUrl, r.Status)
 	}
 
-	var reader io.ReadCloser
+	var reader io.Reader
 	contentEncoding := r.Header.Get("Content-Encoding")
 	switch contentEncoding {
 	case "gzip":
-		reader, err = gzip.NewReader(r.Body)
-		if err != nil {
-			return true, err
+		gr, gerr := gzip.NewReader(r.Body)
+		if gerr != nil {
+			return true, gerr
 		}
-		defer reader.Close()
+		defer gr.Close()
+		reader = gr
+	case "zstd":
+		zr, zerr := util.GetPooledZstdDecoder(r.Body)
+		if zerr != nil {
+			return true, zerr
+		}
+		defer util.PutPooledZstdDecoder(zr)
+		reader = zr
 	default:
 		reader = r.Body
 	}
