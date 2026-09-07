@@ -51,17 +51,22 @@ type UploadOption struct {
 	Filename          string
 	Cipher            bool
 	IsInputCompressed bool
-	IsReplication     bool // preserve the source needle's compression state
-	MimeType          string
-	PairMap           map[string]string
-	Jwt               security.EncodedJwt
-	RetryForever      bool
-	Md5               string
-	WantMd5           bool // compute Content-MD5 from the data when Md5 is unset and the upload is not ciphered
-	BytesBuffer       *bytes.Buffer
-	SourceUrl         string                           // optional: for logging when reading from a remote source
-	MaxAttempts       int                              // <=0 uses the default
-	GenUploadUrl      func(host, fileId string) string // if nil → fallback "http://{host}/{fileId}"
+	// ContentEncoding names the compression algorithm of already-compressed
+	// input ("gzip" or "zstd") so the upload part carries a matching
+	// Content-Encoding header. When empty and IsInputCompressed is true, the
+	// algorithm is sniffed from the data's magic bytes (doUploadData).
+	ContentEncoding string
+	IsReplication   bool // preserve the source needle's compression state
+	MimeType        string
+	PairMap         map[string]string
+	Jwt             security.EncodedJwt
+	RetryForever    bool
+	Md5             string
+	WantMd5         bool // compute Content-MD5 from the data when Md5 is unset and the upload is not ciphered
+	BytesBuffer     *bytes.Buffer
+	SourceUrl       string                           // optional: for logging when reading from a remote source
+	MaxAttempts     int                              // <=0 uses the default
+	GenUploadUrl    func(host, fileId string) string // if nil → fallback "http://{host}/{fileId}"
 }
 
 type UploadResult struct {
@@ -344,8 +349,15 @@ func (uploader *Uploader) retriedUploadData(ctx context.Context, data []byte, op
 }
 
 func (uploader *Uploader) doUploadData(ctx context.Context, data []byte, option *UploadOption) (uploadResult *UploadResult, err error) {
-	contentIsGzipped := option.IsInputCompressed
-	shouldGzipNow := false
+	contentIsCompressed := option.IsInputCompressed
+	contentEncoding := option.ContentEncoding
+	if contentIsCompressed && contentEncoding == "" {
+		// Forwarders of already-compressed data (replication, S3 copy, filer
+		// sync) may not track the algorithm; sniff it from the magic bytes.
+		// Unknown payloads keep the legacy "gzip" header set in upload_content.
+		contentEncoding = util.ContentEncodingOf(data)
+	}
+	shouldCompressNow := false
 	if !option.IsInputCompressed && !option.IsReplication {
 		if option.MimeType == "" {
 			option.MimeType = http.DetectContentType(data)
@@ -355,30 +367,31 @@ func (uploader *Uploader) doUploadData(ctx context.Context, data []byte, option 
 			}
 		}
 		if shouldBeCompressed, iAmSure := util.IsCompressableFileType(filepath.Base(option.Filename), option.MimeType); iAmSure && shouldBeCompressed {
-			shouldGzipNow = true
+			shouldCompressNow = true
 		} else if !iAmSure && option.MimeType == "" && len(data) > 16*1024 {
 			var compressed []byte
-			compressed, err = util.GzipData(data[0:128])
+			compressed, err = util.ZstdData(data[0:128])
 			if err != nil {
 				return
 			}
-			shouldGzipNow = len(compressed)*10 < 128*9 // can not compress to less than 90%
+			shouldCompressNow = len(compressed)*10 < 128*9 // can not compress to less than 90%
 		}
 	}
 
 	var clearDataLen int
 
-	// gzip if possible
+	// compress with zstd if possible
 	// this could be double copying
 	clearDataLen = len(data)
 	clearData := data
-	if shouldGzipNow {
-		compressed, compressErr := util.GzipData(data)
+	if shouldCompressNow {
+		compressed, compressErr := util.ZstdData(data)
 		// fmt.Printf("data is compressed from %d ==> %d\n", len(data), len(compressed))
 		if compressErr == nil {
 			if len(compressed) < len(data) {
 				data = compressed
-				contentIsGzipped = true
+				contentIsCompressed = true
+				contentEncoding = "zstd"
 			}
 		}
 	} else if option.IsInputCompressed && !option.IsReplication {
@@ -390,7 +403,7 @@ func (uploader *Uploader) doUploadData(ctx context.Context, data []byte, option 
 	}
 
 	if option.Cipher {
-		// encrypt(gzip(data))
+		// encrypt(compress(data))
 
 		// encrypt
 		cipherKey := util.GenCipherKey()
@@ -423,7 +436,7 @@ func (uploader *Uploader) doUploadData(ctx context.Context, data []byte, option 
 		// chunk ETag has to come from the caller's plaintext digest.
 		uploadResult.ContentMd5 = option.Md5
 		uploadResult.Size = uint32(clearDataLen)
-		if contentIsGzipped {
+		if contentIsCompressed {
 			uploadResult.Gzip = 1
 		}
 	} else {
@@ -435,7 +448,8 @@ func (uploader *Uploader) doUploadData(ctx context.Context, data []byte, option 
 			UploadUrl:         option.UploadUrl,
 			Filename:          option.Filename,
 			Cipher:            false,
-			IsInputCompressed: contentIsGzipped,
+			IsInputCompressed: contentIsCompressed,
+			ContentEncoding:   contentEncoding,
 			MimeType:          option.MimeType,
 			PairMap:           option.PairMap,
 			Jwt:               option.Jwt,
@@ -446,7 +460,7 @@ func (uploader *Uploader) doUploadData(ctx context.Context, data []byte, option 
 			return
 		}
 		uploadResult.Size = uint32(clearDataLen)
-		if contentIsGzipped {
+		if contentIsCompressed {
 			uploadResult.Gzip = 1
 		}
 	}
@@ -478,7 +492,13 @@ func (uploader *Uploader) upload_content(ctx context.Context, fillBufferFunction
 		h.Set("Content-Type", option.MimeType)
 	}
 	if option.IsInputCompressed {
-		h.Set("Content-Encoding", "gzip")
+		encoding := option.ContentEncoding
+		if encoding == "" {
+			// legacy fallback: the payload's algorithm is unknown, so keep the
+			// historical header. Reads sniff the magic bytes either way.
+			encoding = "gzip"
+		}
+		h.Set("Content-Encoding", encoding)
 	}
 	if option.Md5 != "" {
 		h.Set("Content-MD5", option.Md5)

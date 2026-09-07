@@ -47,7 +47,7 @@ func TestCreateNeedleFromRequest(t *testing.T) {
 			assert.Equal(t, nil, err, "upload: %v", err)
 			assert.Equal(t, "text/plain; charset=utf-8", string(n.Mime), "mime detection failed: %v", string(n.Mime))
 			assert.Equal(t, true, n.IsCompressed(), "this should be compressed")
-			assert.Equal(t, true, util.IsGzippedContent(n.Data), "this should be gzip")
+			assert.Equal(t, true, util.IsZstdContent(n.Data), "this should be zstd (default compression)")
 			fmt.Printf("needle: %v, originalSize: %d\n", n, originalSize)
 		}
 		uploadOption := &UploadOption{
