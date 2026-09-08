@@ -263,3 +263,29 @@ func TestParseUploadChunkManifestStaysRaw(t *testing.T) {
 		t.Fatalf("chunk manifest must be stored verbatim")
 	}
 }
+
+// TestParseUploadAnalyticsFormatsSkipCompression pins that already-compressed
+// analytics files (parquet/orc/avro/...) are never probed or re-compressed.
+func TestParseUploadAnalyticsFormatsSkipCompression(t *testing.T) {
+	// parquet magic "PAR1" + binary column data (real parquet pages contain
+	// binary bytes, which http.DetectContentType classifies as octet-stream —
+	// that is the path where the extension skip list applies)
+	payload := append([]byte("PAR1"),
+		bytes.Repeat([]byte{0x00, 0x01, 0xFE, 0xFF, 0x0C, 'A'}, 512)...)
+
+	for _, ext := range []string{".parquet", ".parq", ".orc", ".avro", ".arrow", ".feather", ".lance"} {
+		t.Run(ext, func(t *testing.T) {
+			rec := buildMultipartUpload(t, "/3,01637037d6", "table"+ext, payload, nil)
+			pu, e := ParseUpload(rec, 32*1024*1024, &bytes.Buffer{})
+			if e != nil {
+				t.Fatalf("ParseUpload: %v", e)
+			}
+			if pu.IsZstd || pu.IsGzipped {
+				t.Fatalf("%s payload must not be re-compressed", ext)
+			}
+			if !bytes.Equal(pu.Data, payload) {
+				t.Fatalf("%s payload must be stored verbatim", ext)
+			}
+		})
+	}
+}

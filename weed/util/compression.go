@@ -129,6 +129,11 @@ func ContentEncodingOf(data []byte) string {
 	switch ext {
 	case ".zip", ".rar", ".gz", ".bz2", ".xz", ".zst", ".br":
 		return false, true
+	// analytics formats are already codec-compressed internally (parquet/orc
+	// zstd-snappy layers, avro containers, arrow ipc, lance) — never worth
+	// re-compressing, not even probing
+	case ".parquet", ".parq", ".orc", ".avro", ".arrow", ".feather", ".lance":
+		return false, true
 	case ".pdf", ".txt", ".html", ".htm", ".css", ".js", ".json":
 		return true, true
 	case ".php", ".java", ".go", ".rb", ".c", ".cpp", ".h", ".hpp":

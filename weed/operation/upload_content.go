@@ -366,7 +366,7 @@ func (uploader *Uploader) doUploadData(ctx context.Context, data []byte, option 
 				option.MimeType = ""
 			}
 		}
-		if shouldBeCompressed, iAmSure := util.IsCompressableFileType(filepath.Base(option.Filename), option.MimeType); iAmSure && shouldBeCompressed {
+		if shouldBeCompressed, iAmSure := util.IsCompressableFileType(filepath.Ext(option.Filename), option.MimeType); iAmSure && shouldBeCompressed {
 			shouldCompressNow = true
 		} else if !iAmSure && option.MimeType == "" && len(data) > 16*1024 {
 			var compressed []byte
