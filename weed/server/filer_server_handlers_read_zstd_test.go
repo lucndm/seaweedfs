@@ -139,3 +139,40 @@ func TestZstdAwareWriterRangeAdvertised(t *testing.T) {
 		t.Fatalf("body must be the first 10 stored bytes")
 	}
 }
+
+// TestZstdAwareWriterRangePlainGetsTruthfulHeader pins the passthrough policy:
+// ranges index the stored bytes, so even a plain (non-advertising) client gets
+// the raw frames — but labeled with Content-Encoding: zstd so the encoding is
+// identifiable instead of silent garbage (mirrors S3 semantics).
+func TestZstdAwareWriterRangePlainGetsTruthfulHeader(t *testing.T) {
+	plain := bytes.Repeat([]byte("zstd-roundtrip-test-line-"), 800)
+	stored, err := util.ZstdData(plain)
+	if err != nil {
+		t.Fatalf("ZstdData: %v", err)
+	}
+
+	r := zstdTestRequest(t, http.MethodGet, "/buckets/plane/.zstd-test/payload.bin", "identity", "bytes=0-9")
+	rec := httptest.NewRecorder()
+	zw := newZstdAwareWriter(rec, r)
+	zw.PreDecide(util.IsZstdContent(stored[:4]))
+	err = ProcessRangeRequest(r, zw, int64(len(stored)), "application/octet-stream", func(offset int64, size int64) (filer.DoStreamContent, error) {
+		return func(writer io.Writer) error {
+			_, err := writer.Write(stored[offset : offset+size])
+			return err
+		}, nil
+	})
+	if err != nil {
+		t.Fatalf("ProcessRangeRequest: %v", err)
+	}
+	zw.Finalize()
+
+	if rec.Code != http.StatusPartialContent {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusPartialContent)
+	}
+	if got := rec.Header().Get("Content-Encoding"); got != "zstd" {
+		t.Fatalf("Content-Encoding = %q, want zstd (truthful header even for plain ranged clients)", got)
+	}
+	if !bytes.Equal(rec.Body.Bytes(), stored[:10]) {
+		t.Fatalf("body must be the first 10 stored bytes")
+	}
+}
