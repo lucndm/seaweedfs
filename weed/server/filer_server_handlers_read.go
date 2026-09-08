@@ -220,9 +220,10 @@ func (fs *FilerServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request) 
 	// fork: zstd stored-content negotiation — peek body head, then either
 	// pass frames through with Content-Encoding: zstd or decode for plain clients
 	zw := newZstdAwareWriter(w, r)
-	if zw.hasRange && zw.acceptsZstd {
+	if zw.hasRange {
 		// Ranged responses write the header before streaming, so decide via a
-		// tiny head probe instead of the body peek.
+		// tiny head probe for every ranged request, not just advertised ones —
+		// a plain client still needs the truthful Content-Encoding header.
 		zw.PreDecide(fs.probeStoredZstd(ctx, entry))
 	}
 	ProcessRangeRequest(r, zw, totalSize, mimeType, func(offset int64, size int64) (filer.DoStreamContent, error) {

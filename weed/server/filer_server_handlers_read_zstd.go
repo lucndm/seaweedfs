@@ -21,9 +21,12 @@ import (
 // with "Content-Encoding: zstd" (client advertises support) or
 // transparently stream-decompresses (plain clients).
 //
-// Ranged requests keep legacy behavior: ranges index the stored bytes, so
-// advertising clients get raw frames + header; plain clients get raw frames
-// without the header rather than a wrong-length decode.
+// Ranged requests index the stored bytes, so the frames ARE the
+// representation: every ranged response to a zstd-stored object carries the
+// raw frames plus "Content-Encoding: zstd", advertised or not (mirrors S3,
+// which returns Content-Encoding from object metadata regardless of
+// Accept-Encoding). A client that cannot decode zstd therefore gets frames it
+// can identify instead of silent garbage.
 //
 // The caller MUST invoke Finalize after ProcessRangeRequest returns — it is
 // the end-of-body signal that lets bodies smaller than the peek window be
@@ -68,10 +71,11 @@ func (z *zstdAwareWriter) PreDecide(isZstd bool) {
 	}
 	h := z.rw.Header()
 	h.Add("Vary", "Accept-Encoding")
-	if z.acceptsZstd {
-		h.Set("Content-Encoding", "zstd")
-	} else {
-		glog.V(1).Infof("filer zstd: ranged request on zstd-stored object without Accept-Encoding; serving raw frames")
+	// The frames are the representation — always label them truthfully,
+	// advertised or not (see the type comment).
+	h.Set("Content-Encoding", "zstd")
+	if !z.acceptsZstd {
+		glog.V(1).Infof("filer zstd: ranged request on zstd-stored object without Accept-Encoding; serving frames with Content-Encoding: zstd")
 	}
 }
 
@@ -146,11 +150,11 @@ func (z *zstdAwareWriter) decide(head []byte) {
 	h := z.rw.Header()
 	h.Add("Vary", "Accept-Encoding")
 	switch {
-	case z.hasRange && z.acceptsZstd:
-		// Ranges index stored bytes; the frames are the representation.
-		h.Set("Content-Encoding", "zstd")
 	case z.hasRange:
-		glog.V(1).Infof("filer zstd: ranged request on zstd-stored object without Accept-Encoding; serving raw frames")
+		// Ranges index stored bytes; the frames are the representation —
+		// label them truthfully even without advertisement (same policy as
+		// PreDecide).
+		h.Set("Content-Encoding", "zstd")
 	default:
 		if z.acceptsZstd {
 			h.Set("Content-Encoding", "zstd")
