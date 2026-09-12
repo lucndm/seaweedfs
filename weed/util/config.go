@@ -119,7 +119,9 @@ func GetViper() *ViperProxy {
 		vp.Viper = viper.GetViper()
 		vp.AutomaticEnv()
 		vp.SetEnvPrefix("weed")
-		vp.SetEnvKeyReplacer(strings.NewReplacer(".", "_"))
+		// Both separators map to underscore so a config key like
+		// "admin.sso.client-id" resolves the env WEED_ADMIN_SSO_CLIENT_ID.
+		vp.SetEnvKeyReplacer(strings.NewReplacer(".", "_", "-", "_"))
 	}
 
 	return vp
