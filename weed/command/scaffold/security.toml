@@ -219,6 +219,30 @@ password = ""
 user = ""
 password = ""
 
+# Admin server SSO login (OIDC, e.g. Zitadel)
+# When enabled, SSO replaces local username/password login: the login page
+# shows a "Sign in with SSO" button and every SSO user gets the admin role.
+# The callback URL registered with the provider is <redirect-url>;
+# by default the admin UI serves it at /auth/sso/callback.
+# Can also be set via environment variables with WEED_ prefix:
+#   WEED_ADMIN_SSO_ENABLED, WEED_ADMIN_SSO_ISSUER, WEED_ADMIN_SSO_CLIENT_ID,
+#   WEED_ADMIN_SSO_CLIENT_SECRET, WEED_ADMIN_SSO_REDIRECT_URL, WEED_ADMIN_SSO_SCOPES
+# Example (Zitadel):
+#   [admin.sso]
+#   enabled = true
+#   issuer = "https://<your-instance>.zitadel.cloud"
+#   client-id = "<client-id-from-zitadel>"
+#   client-secret = ""                # optional for public PKCE clients
+#   redirect-url = "https://admin.example.com/auth/sso/callback"
+#   scopes = "openid,profile,email"
+[admin.sso]
+enabled = false
+issuer = ""
+client-id = ""
+client-secret = ""
+redirect-url = ""
+scopes = "openid,profile,email"
+
 # SSE-S3 server-side encryption key management
 # These settings configure the Key Encryption Key (KEK) for S3 SSE-S3 encryption.
 # Set exactly one of kek or key. If neither is set, SSE-S3 is disabled.

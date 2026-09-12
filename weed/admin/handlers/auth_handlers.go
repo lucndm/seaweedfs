@@ -13,46 +13,58 @@ import (
 type AuthHandlers struct {
 	adminServer  *dash.AdminServer
 	sessionStore sessions.Store
+	ssoConfig    *dash.SSOConfig
+	sso          *ssoFlow
 }
 
 // NewAuthHandlers creates a new instance of AuthHandlers
-func NewAuthHandlers(adminServer *dash.AdminServer, store sessions.Store) *AuthHandlers {
+func NewAuthHandlers(adminServer *dash.AdminServer, store sessions.Store, ssoConfig *dash.SSOConfig) *AuthHandlers {
 	return &AuthHandlers{
 		adminServer:  adminServer,
 		sessionStore: store,
+		ssoConfig:    ssoConfig,
 	}
 }
 
-// ShowLogin displays the login page
-func (a *AuthHandlers) ShowLogin(w http.ResponseWriter, r *http.Request) {
-	session, err := a.sessionStore.Get(r, dash.SessionName())
-	var csrfToken string
-	if err == nil {
-		if authenticated, _ := session.Values["authenticated"].(bool); authenticated {
-			http.Redirect(w, r, dash.P(r.Context(), "/admin"), http.StatusSeeOther)
+// ShowLogin displays the login page. When SSO is enabled, a sign-in-with-SSO
+// button is shown; when password authentication is disabled, the credential
+// form is hidden.
+func (a *AuthHandlers) ShowLogin(passwordAuthEnabled, ssoEnabled bool) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		session, err := a.sessionStore.Get(r, dash.SessionName())
+		var csrfToken string
+		if err == nil {
+			if authenticated, _ := session.Values["authenticated"].(bool); authenticated {
+				http.Redirect(w, r, dash.P(r.Context(), "/admin"), http.StatusSeeOther)
+				return
+			}
+		} else {
+			glog.V(1).Infof("Failed to load session for login page: %v", err)
+		}
+
+		if session != nil {
+			token, tokenErr := dash.EnsureSessionCSRFToken(session, r, w)
+			if tokenErr != nil {
+				glog.V(1).Infof("Failed to ensure CSRF token for login page: %v", tokenErr)
+			} else {
+				csrfToken = token
+			}
+		}
+
+		errorMessage := r.URL.Query().Get("error")
+
+		var ssoLoginURL string
+		if ssoEnabled {
+			ssoLoginURL = dash.P(r.Context(), "/auth/sso/login")
+		}
+
+		// Render login template
+		w.Header().Set("Content-Type", "text/html")
+		loginComponent := layout.LoginForm("SeaweedFS Admin", errorMessage, csrfToken, passwordAuthEnabled, ssoLoginURL)
+		if err := loginComponent.Render(r.Context(), w); err != nil {
+			writeJSONError(w, http.StatusInternalServerError, "Failed to render login template: "+err.Error())
 			return
 		}
-	} else {
-		glog.V(1).Infof("Failed to load session for login page: %v", err)
-	}
-
-	if session != nil {
-		token, tokenErr := dash.EnsureSessionCSRFToken(session, r, w)
-		if tokenErr != nil {
-			glog.V(1).Infof("Failed to ensure CSRF token for login page: %v", tokenErr)
-		} else {
-			csrfToken = token
-		}
-	}
-
-	errorMessage := r.URL.Query().Get("error")
-
-	// Render login template
-	w.Header().Set("Content-Type", "text/html")
-	loginComponent := layout.LoginForm("SeaweedFS Admin", errorMessage, csrfToken)
-	if err := loginComponent.Render(r.Context(), w); err != nil {
-		writeJSONError(w, http.StatusInternalServerError, "Failed to render login template: "+err.Error())
-		return
 	}
 }
 

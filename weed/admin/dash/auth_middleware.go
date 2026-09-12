@@ -49,19 +49,7 @@ func (s *AdminServer) HandleLogin(store sessions.Store, adminUser, adminPassword
 		}
 
 		if authenticated {
-			for key := range session.Values {
-				delete(session.Values, key)
-			}
-			session.Values["authenticated"] = true
-			session.Values["username"] = loginUsername
-			session.Values["role"] = role
-			csrfToken, err := generateCSRFToken()
-			if err != nil {
-				http.Redirect(w, r, prefix+"/login?error=Unable to create session. Please try again or contact administrator.", http.StatusSeeOther)
-				return
-			}
-			session.Values[sessionCSRFTokenKey] = csrfToken
-			if err := session.Save(r, w); err != nil {
+			if err := CreateAuthenticatedSession(session, r, w, loginUsername, role); err != nil {
 				// Log the detailed error server-side for diagnostics.
 				glog.Errorf("Failed to save session for user %s: %v", loginUsername, err)
 				http.Redirect(w, r, prefix+"/login?error=Unable to create session. Please try again or contact administrator.", http.StatusSeeOther)
@@ -75,6 +63,24 @@ func (s *AdminServer) HandleLogin(store sessions.Store, adminUser, adminPassword
 		// Authentication failed.
 		http.Redirect(w, r, prefix+"/login?error=Invalid credentials", http.StatusSeeOther)
 	}
+}
+
+// CreateAuthenticatedSession resets the session (clearing any pre-auth SSO
+// flow state, preventing session fixation) and marks it authenticated with a
+// fresh CSRF token. The session is saved before returning.
+func CreateAuthenticatedSession(session *sessions.Session, r *http.Request, w http.ResponseWriter, username, role string) error {
+	for key := range session.Values {
+		delete(session.Values, key)
+	}
+	session.Values["authenticated"] = true
+	session.Values["username"] = username
+	session.Values["role"] = role
+	csrfToken, err := generateCSRFToken()
+	if err != nil {
+		return err
+	}
+	session.Values[sessionCSRFTokenKey] = csrfToken
+	return session.Save(r, w)
 }
 
 // HandleLogout handles user logout.

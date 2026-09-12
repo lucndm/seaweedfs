@@ -375,10 +375,8 @@ templ Layout(view ViewContext, content templ.Component) {
 </html>
 }
 
-templ LoginForm(title string, errorMessage string, csrfToken string) {
-{{
-  prefix := dash.URLPrefixFromContext(ctx)
-}}
+templ LoginForm(title string, errorMessage string, csrfToken string, passwordAuthEnabled bool, ssoLoginURL string) {
+{{ prefix := dash.URLPrefixFromContext(ctx) }}
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -408,32 +406,47 @@ templ LoginForm(title string, errorMessage string, csrfToken string) {
                             </div>
                         }
 
-                        <form method="POST" action={ templ.SafeURL(prefix + "/login") }>
-                            <input type="hidden" name="csrf_token" value={ csrfToken }>
-                            <div class="mb-3">
-                                <label for="username" class="form-label">Username</label>
-                                <div class="input-group">
-                                    <span class="input-group-text">
-                                        <i class="fas fa-user"></i>
-                                    </span>
-                                    <input type="text" class="form-control" id="username" name="username" required>
-                                </div>
-                            </div>
+                        if ssoLoginURL != "" {
+                            <a href={ templ.SafeURL(ssoLoginURL) } class="btn btn-primary w-100 mb-2">
+                                <i class="fas fa-key me-2"></i>Sign in with SSO
+                            </a>
+                        }
 
-                            <div class="mb-4">
-                                <label for="password" class="form-label">Password</label>
-                                <div class="input-group">
-                                    <span class="input-group-text">
-                                        <i class="fas fa-lock"></i>
-                                    </span>
-                                    <input type="password" class="form-control" id="password" name="password" required>
-                                </div>
+                        if passwordAuthEnabled && ssoLoginURL != "" {
+                            <div class="position-relative my-3">
+                                <hr>
+                                <span class="position-absolute top-50 start-50 translate-middle bg-white px-3 text-muted small">or</span>
                             </div>
+                        }
 
-                            <button type="submit" class="btn btn-primary w-100">
-                                <i class="fas fa-sign-in-alt me-2"></i>Sign In
-                            </button>
-                        </form>
+                        if passwordAuthEnabled {
+                            <form method="POST" action={ templ.SafeURL(prefix + "/login") }>
+                                <input type="hidden" name="csrf_token" value={ csrfToken }>
+                                <div class="mb-3">
+                                    <label for="username" class="form-label">Username</label>
+                                    <div class="input-group">
+                                        <span class="input-group-text">
+                                            <i class="fas fa-user"></i>
+                                        </span>
+                                        <input type="text" class="form-control" id="username" name="username" required>
+                                    </div>
+                                </div>
+
+                                <div class="mb-4">
+                                    <label for="password" class="form-label">Password</label>
+                                    <div class="input-group">
+                                        <span class="input-group-text">
+                                            <i class="fas fa-lock"></i>
+                                        </span>
+                                        <input type="password" class="form-control" id="password" name="password" required>
+                                    </div>
+                                </div>
+
+                                <button type="submit" class="btn btn-primary w-100">
+                                    <i class="fas fa-sign-in-alt me-2"></i>Sign In
+                                </button>
+                            </form>
+                        }
                     </div>
                 </div>
             </div>

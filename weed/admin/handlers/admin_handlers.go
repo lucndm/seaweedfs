@@ -33,8 +33,8 @@ type AdminHandlers struct {
 }
 
 // NewAdminHandlers creates a new instance of AdminHandlers
-func NewAdminHandlers(adminServer *dash.AdminServer, store sessions.Store) *AdminHandlers {
-	authHandlers := NewAuthHandlers(adminServer, store)
+func NewAdminHandlers(adminServer *dash.AdminServer, store sessions.Store, ssoConfig *dash.SSOConfig) *AdminHandlers {
+	authHandlers := NewAuthHandlers(adminServer, store, ssoConfig)
 	clusterHandlers := NewClusterHandlers(adminServer)
 	fileBrowserHandlers := NewFileBrowserHandlers(adminServer)
 	userHandlers := NewUserHandlers(adminServer)
@@ -59,7 +59,7 @@ func NewAdminHandlers(adminServer *dash.AdminServer, store sessions.Store) *Admi
 }
 
 // SetupRoutes configures all the routes for the admin interface
-func (h *AdminHandlers) SetupRoutes(r *mux.Router, authRequired bool, adminUser, adminPassword, readOnlyUser, readOnlyPassword string, enableUI bool) {
+func (h *AdminHandlers) SetupRoutes(r *mux.Router, authRequired bool, adminUser, adminPassword, readOnlyUser, readOnlyPassword string, ssoConfig *dash.SSOConfig, enableUI bool) {
 	// Health check (no auth required)
 	r.HandleFunc("/health", h.HealthCheck).Methods(http.MethodGet)
 
@@ -78,9 +78,15 @@ func (h *AdminHandlers) SetupRoutes(r *mux.Router, authRequired bool, adminUser,
 
 	if authRequired {
 		// Authentication routes (no auth required)
-		r.HandleFunc("/login", h.authHandlers.ShowLogin).Methods(http.MethodGet)
+		passwordAuthEnabled := adminPassword != ""
+		ssoEnabled := ssoConfig != nil && ssoConfig.Enabled
+		r.HandleFunc("/login", h.authHandlers.ShowLogin(passwordAuthEnabled, ssoEnabled)).Methods(http.MethodGet)
 		r.Handle("/login", h.authHandlers.HandleLogin(adminUser, adminPassword, readOnlyUser, readOnlyPassword)).Methods(http.MethodPost)
 		r.HandleFunc("/logout", h.authHandlers.HandleLogout).Methods(http.MethodGet)
+		if ssoEnabled {
+			r.HandleFunc("/auth/sso/login", h.authHandlers.HandleSSOLogin).Methods(http.MethodGet)
+			r.HandleFunc("/auth/sso/callback", h.authHandlers.HandleSSOCallback).Methods(http.MethodGet)
+		}
 
 		protected := r.NewRoute().Subrouter()
 		protected.Use(dash.RequireAuth(h.sessionStore))
