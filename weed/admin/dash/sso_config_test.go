@@ -17,6 +17,38 @@ func TestLoadSSOConfig_DisabledByDefault(t *testing.T) {
 	}
 }
 
+// TestLoadSSOConfig_FromEnv pins the WEED_ADMIN_SSO_* environment contract:
+// hyphenated config keys (client-id, redirect-url) must resolve env vars with
+// underscores (WEED_ADMIN_SSO_CLIENT_ID). Regression guard for the viper
+// EnvKeyReplacer missing the "-" to "_" mapping.
+func TestLoadSSOConfig_FromEnv(t *testing.T) {
+	t.Setenv("WEED_ADMIN_SSO_ENABLED", "true")
+	t.Setenv("WEED_ADMIN_SSO_ISSUER", "https://auth.example.com/")
+	t.Setenv("WEED_ADMIN_SSO_CLIENT_ID", "env-client")
+	t.Setenv("WEED_ADMIN_SSO_CLIENT_SECRET", "env-secret")
+	t.Setenv("WEED_ADMIN_SSO_REDIRECT_URL", "https://admin.example.com/auth/sso/callback")
+
+	cfg := LoadSSOConfig()
+	if !cfg.Enabled {
+		t.Fatal("enabled flag not read from env")
+	}
+	if cfg.ClientID != "env-client" {
+		t.Errorf("ClientID = %q, want %q (env lookup for hyphenated key broken)", cfg.ClientID, "env-client")
+	}
+	if cfg.ClientSecret != "env-secret" {
+		t.Errorf("ClientSecret = %q, want %q", cfg.ClientSecret, "env-secret")
+	}
+	if cfg.RedirectURL != "https://admin.example.com/auth/sso/callback" {
+		t.Errorf("RedirectURL = %q, want the callback URL (trailing slash trimmed)", cfg.RedirectURL)
+	}
+	if cfg.Issuer != "https://auth.example.com" {
+		t.Errorf("Issuer = %q, want trailing slash trimmed", cfg.Issuer)
+	}
+	if err := cfg.Validate(); err != nil {
+		t.Errorf("env-sourced config must validate: %v", err)
+	}
+}
+
 func TestSSOConfigValidate(t *testing.T) {
 	valid := &SSOConfig{
 		Enabled:     true,
