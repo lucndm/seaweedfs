@@ -142,6 +142,28 @@ var cmdAdmin = &Command{
       WEED_ADMIN_USER, WEED_ADMIN_PASSWORD, WEED_ADMIN_READONLY_USER, WEED_ADMIN_READONLY_PASSWORD
     - Precedence: CLI flag > env var / security.toml > default value
 
+  SSO Login (OIDC / Zitadel):
+    - Configure the [admin.sso] section in security.toml to enable single sign-on
+    - When enabled, SSO replaces local username/password login entirely
+    - The login page shows a "Sign in with SSO" button; every SSO user gets the admin role
+    - Flow: OIDC authorization code with PKCE; the ID token is verified against
+      the provider's JWKS (issuer, audience, expiry and nonce are all checked)
+    - Example security.toml:
+        [admin.sso]
+        enabled = true
+        issuer = "https://<your-instance>.zitadel.cloud"
+        client-id = "<client-id>"
+        client-secret = ""                                  # optional (public PKCE client)
+        redirect-url = "https://admin.example.com/auth/sso/callback"
+        scopes = "openid,profile,email"
+    - redirect-url must be registered with the provider; the admin serves the
+      callback at /auth/sso/callback (honor -urlPrefix in front of it)
+    - Can also be set via environment variables:
+      WEED_ADMIN_SSO_ENABLED, WEED_ADMIN_SSO_ISSUER, WEED_ADMIN_SSO_CLIENT_ID,
+      WEED_ADMIN_SSO_CLIENT_SECRET, WEED_ADMIN_SSO_REDIRECT_URL, WEED_ADMIN_SSO_SCOPES
+    - Enabling SSO satisfies the network-binding authentication requirement
+      for -ip=0.0.0.0 the same way -adminPassword does
+
   Network Binding:
     - By default the admin server binds to 127.0.0.1 (loopback only).
     - Use -ip=0.0.0.0 to listen on all interfaces.
@@ -235,6 +257,14 @@ func runAdmin(cmd *Command, args []string) bool {
 	// Optional admin.toml with maintenance task settings
 	util.LoadConfiguration("admin", false)
 
+	// SSO (OIDC) settings for the admin UI, from security.toml [admin.sso]
+	// or WEED_ADMIN_SSO_* environment variables.
+	ssoConfig := dash.LoadSSOConfig()
+	if err := ssoConfig.Validate(); err != nil {
+		fmt.Printf("Error: invalid SSO configuration: %v\n", err)
+		return false
+	}
+
 	// Apply security.toml / env var fallbacks for credential flags.
 	// CLI flags take precedence over security.toml / WEED_* env vars.
 	applyViperFallback(cmd, a.adminUser, "adminUser", "admin.user")
@@ -297,7 +327,7 @@ func runAdmin(cmd *Command, args []string) bool {
 	// keep the pre-existing unauthenticated setup.
 	hasMTLS := viper.GetString("https.admin.key") != "" && viper.GetString("https.admin.ca") != ""
 	insecureAllowed := a.allowInsecureBind != nil && *a.allowInsecureBind
-	if !isLoopbackIp(*a.ip) && *a.adminPassword == "" && !hasMTLS {
+	if !isLoopbackIp(*a.ip) && *a.adminPassword == "" && !hasMTLS && !ssoConfig.Enabled {
 		if !insecureAllowed {
 			fmt.Printf("Error: the admin server is configured to bind to %s (non-loopback) with\n", *a.ip)
 			fmt.Printf("       authentication disabled. This would expose the admin API unauthenticated\n")
@@ -305,6 +335,7 @@ func runAdmin(cmd *Command, args []string) bool {
 			fmt.Printf("       To fix this, either:\n")
 			fmt.Printf("         - set -adminPassword to enable authentication, or\n")
 			fmt.Printf("         - configure [https.admin] key and ca in security.toml for mTLS, or\n")
+			fmt.Printf("         - enable SSO login via the [admin.sso] section in security.toml, or\n")
 			fmt.Printf("         - set -ip=127.0.0.1 to bind to loopback only, or\n")
 			fmt.Printf("         - set -allowInsecureBind to start anyway (INSECURE).\n")
 			return false
@@ -335,6 +366,9 @@ func runAdmin(cmd *Command, args []string) bool {
 		}
 	} else {
 		fmt.Printf("Authentication: Disabled\n")
+	}
+	if ssoConfig.Enabled {
+		fmt.Printf("SSO: Enabled (issuer: %s)\n", ssoConfig.Issuer)
 	}
 	fmt.Printf("Plugin: Enabled\n")
 
@@ -473,10 +507,16 @@ func startAdminServer(ctx context.Context, options AdminOptions, enableUI bool, 
 		}
 	}()
 
-	// Create handlers and setup routes
-	authRequired := *options.adminPassword != ""
-	adminHandlers := handlers.NewAdminHandlers(adminServer, store)
-	adminHandlers.SetupRoutes(r, authRequired, *options.adminUser, *options.adminPassword, *options.readOnlyUser, *options.readOnlyPassword, enableUI)
+	// Create handlers and setup routes. SSO settings come from viper
+	// (security.toml [admin.sso] / WEED_ADMIN_SSO_* env vars), so `weed mini`
+	// picks them up without extra flags.
+	ssoConfig := dash.LoadSSOConfig()
+	if err := ssoConfig.Validate(); err != nil {
+		return fmt.Errorf("invalid SSO configuration: %w", err)
+	}
+	authRequired := *options.adminPassword != "" || ssoConfig.Enabled
+	adminHandlers := handlers.NewAdminHandlers(adminServer, store, ssoConfig)
+	adminHandlers.SetupRoutes(r, authRequired, *options.adminUser, *options.adminPassword, *options.readOnlyUser, *options.readOnlyPassword, ssoConfig, enableUI)
 
 	// Server configuration
 	addr := util.JoinHostPort(*options.ip, *options.port)
