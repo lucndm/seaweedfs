@@ -176,3 +176,41 @@ func TestZstdAwareWriterRangePlainGetsTruthfulHeader(t *testing.T) {
 		t.Fatalf("body must be the first 10 stored bytes")
 	}
 }
+
+// TestZstdAwareWriterLargeBodyShortWrite covers the filer streaming path:
+// large bodies are written in fixed-size buffers (128KiB), and the peek
+// window spans the first buffer. Write must report the full length it was
+// given — returning fewer bytes with a nil error violates io.Writer and
+// made the streaming reader abort with "short write", truncating every
+// response larger than the peek boundary.
+func TestZstdAwareWriterLargeBodyShortWrite(t *testing.T) {
+	r := zstdTestRequest(t, "GET", "/buckets/b/big.bin", "", "")
+	rec := httptest.NewRecorder()
+	zw := newZstdAwareWriter(rec, r)
+
+	body := make([]byte, 131072+131072) // two full streaming buffers, incompressible noise
+	for i := range body {
+		body[i] = byte(i * 7)
+	}
+	for off := 0; off < len(body); off += 131072 {
+		end := off + 131072
+		if end > len(body) {
+			end = len(body)
+		}
+		n, err := zw.Write(body[off:end])
+		if err != nil {
+			t.Fatalf("Write at %d: %v", off, err)
+		}
+		if n != end-off {
+			t.Fatalf("Write at %d reported %d of %d bytes — short write would abort the stream", off, n, end-off)
+		}
+	}
+	zw.Finalize()
+
+	if got := rec.Body.Len(); got != len(body) {
+		t.Fatalf("client received %d of %d bytes", got, len(body))
+	}
+	if enc := rec.Header().Get("Content-Encoding"); enc != "" {
+		t.Fatalf("plain client must not receive Content-Encoding %q", enc)
+	}
+}

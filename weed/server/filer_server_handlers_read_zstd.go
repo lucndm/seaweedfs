@@ -102,6 +102,25 @@ func (z *zstdAwareWriter) Write(p []byte) (int, error) {
 			}
 			z.buf = append(z.buf, p[:need]...)
 			p = p[need:]
+			z.decide(z.buf)
+			// the withheld peek bytes are part of this Write: forward them
+			// (or hand them to the decoder) together with the remainder and
+			// report the FULL count — returning less than len(p) with a nil
+			// error violates io.Writer and aborts the streaming reader with
+			// "short write" mid-body.
+			if z.decode {
+				if z.pipeW == nil {
+					return 0, io.ErrClosedPipe
+				}
+				n, err := z.pipeW.Write(p)
+				return need + n, err
+			}
+			if _, err := z.rw.Write(z.buf); err != nil {
+				return need, err
+			}
+			z.forwardedHead = true
+			n, err := z.rw.Write(p)
+			return need + n, err
 		}
 		z.decide(z.buf)
 	}
